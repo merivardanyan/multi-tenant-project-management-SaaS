@@ -152,4 +152,35 @@ router.post('/forgot-password', async (req, res, next) => {
   }
 });
 
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) {
+      return res.status(400).json({ error: 'Token and password required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const db = getDB();
+    const [users] = await db.query(
+      'SELECT id FROM users WHERE reset_token = ? AND reset_token_expires > NOW()',
+      [token]
+    );
+    if (users.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired token' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    await db.query(
+      'UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
+      [passwordHash, users[0].id]
+    );
+
+    res.json({ message: 'Password reset successful' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
