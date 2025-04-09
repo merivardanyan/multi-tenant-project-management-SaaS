@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db/connection');
 const { generateAccessToken, generateRefreshToken, saveRefreshToken } = require('../utils/tokens');
-const { sendVerificationEmail } = require('../utils/email');
+const { sendVerificationEmail, sendResetPasswordEmail } = require('../utils/email');
 
 const router = express.Router();
 
@@ -96,6 +96,57 @@ router.post('/login', async (req, res, next) => {
       },
       accessToken,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/verify-email', async (req, res, next) => {
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).json({ error: 'Token required' });
+
+    const db = getDB();
+    const [users] = await db.query(
+      'SELECT id FROM users WHERE verification_token = ?', [token]
+    );
+    if (users.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired token' });
+    }
+
+    await db.query(
+      'UPDATE users SET is_verified = TRUE, verification_token = NULL WHERE id = ?',
+      [users[0].id]
+    );
+
+    res.json({ message: 'Email verified successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const db = getDB();
+    const [users] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+
+    if (users.length === 0) {
+      return res.json({ message: 'If the email exists, a reset link has been sent' });
+    }
+
+    const resetToken = uuidv4();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+    await db.query(
+      'UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
+      [resetToken, expiresAt, users[0].id]
+    );
+
+    sendResetPasswordEmail(email, resetToken).catch(console.error);
+    res.json({ message: 'If the email exists, a reset link has been sent' });
   } catch (err) {
     next(err);
   }
