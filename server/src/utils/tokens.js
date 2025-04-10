@@ -28,4 +28,20 @@ async function saveRefreshToken(userId, token) {
   );
 }
 
-module.exports = { generateAccessToken, generateRefreshToken, saveRefreshToken };
+async function revokeRefreshToken(token) {
+  const db = getDB();
+  await db.query('DELETE FROM refresh_tokens WHERE token = ?', [token]);
+}
+
+async function revokeAllUserTokens(userId) {
+  const db = getDB();
+  await db.query('DELETE FROM refresh_tokens WHERE user_id = ?', [userId]);
+}
+
+module.exports = {
+  generateAccessToken,
+  generateRefreshToken,
+  saveRefreshToken,
+  revokeRefreshToken,
+  revokeAllUserTokens,
+};
