@@ -1,8 +1,15 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db/connection');
-const { generateAccessToken, generateRefreshToken, saveRefreshToken } = require('../utils/tokens');
+const {
+  generateAccessToken,
+  generateRefreshToken,
+  saveRefreshToken,
+  revokeRefreshToken,
+  revokeAllUserTokens,
+} = require('../utils/tokens');
 const { sendVerificationEmail, sendResetPasswordEmail } = require('../utils/email');
 
 const router = express.Router();
@@ -101,6 +108,63 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+router.post('/refresh', async (req, res, next) => {
+  try {
+    const { refreshToken } = req.cookies;
+    if (!refreshToken) return res.status(401).json({ error: 'Refresh token required' });
+
+    let payload;
+    try {
+      payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    const db = getDB();
+    const [tokens] = await db.query(
+      'SELECT * FROM refresh_tokens WHERE token = ? AND user_id = ?',
+      [refreshToken, payload.userId]
+    );
+
+    if (tokens.length === 0) {
+      await revokeAllUserTokens(payload.userId);
+      return res.status(401).json({ error: 'Token reuse detected' });
+    }
+
+    await revokeRefreshToken(refreshToken);
+
+    const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.userId]);
+    if (users.length === 0) return res.status(401).json({ error: 'User not found' });
+
+    const user = users[0];
+    const newAccessToken = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken(user);
+    await saveRefreshToken(user.id, newRefreshToken);
+
+    res.cookie('refreshToken', newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({ accessToken: newAccessToken });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/logout', async (req, res, next) => {
+  try {
+    const { refreshToken } = req.cookies;
+    if (refreshToken) await revokeRefreshToken(refreshToken);
+    res.clearCookie('refreshToken');
+    res.json({ message: 'Logged out' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/verify-email', async (req, res, next) => {
   try {
     const { token } = req.query;
@@ -177,6 +241,7 @@ router.post('/reset-password', async (req, res, next) => {
       [passwordHash, users[0].id]
     );
 
+    await revokeAllUserTokens(users[0].id);
     res.json({ message: 'Password reset successful' });
   } catch (err) {
     next(err);
