@@ -10,10 +10,29 @@ const {
   revokeRefreshToken,
   revokeAllUserTokens,
 } = require('../utils/tokens');
+const { authenticate } = require('../middleware/auth');
 const { sendVerificationEmail, sendResetPasswordEmail } = require('../utils/email');
 
 const router = express.Router();
 
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Register a new user
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, email, password]
+ *             properties:
+ *               name: { type: string }
+ *               email: { type: string }
+ *               password: { type: string, minLength: 8 }
+ */
 router.post('/register', async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
@@ -62,6 +81,13 @@ router.post('/register', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Login with email and password
+ */
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -108,6 +134,13 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/refresh:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Refresh access token using refresh token cookie
+ */
 router.post('/refresh', async (req, res, next) => {
   try {
     const { refreshToken } = req.cookies;
@@ -154,6 +187,13 @@ router.post('/refresh', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Logout and revoke refresh token
+ */
 router.post('/logout', async (req, res, next) => {
   try {
     const { refreshToken } = req.cookies;
@@ -165,6 +205,13 @@ router.post('/logout', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/verify-email:
+ *   get:
+ *     tags: [Auth]
+ *     summary: Verify email with token
+ */
 router.get('/verify-email', async (req, res, next) => {
   try {
     const { token } = req.query;
@@ -189,6 +236,13 @@ router.get('/verify-email', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Request password reset email
+ */
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -216,6 +270,13 @@ router.post('/forgot-password', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Reset password with token
+ */
 router.post('/reset-password', async (req, res, next) => {
   try {
     const { token, password } = req.body;
@@ -243,6 +304,38 @@ router.post('/reset-password', async (req, res, next) => {
 
     await revokeAllUserTokens(users[0].id);
     res.json({ message: 'Password reset successful' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/me:
+ *   get:
+ *     tags: [Auth]
+ *     summary: Get current user profile
+ */
+router.get('/me', authenticate, async (req, res, next) => {
+  try {
+    const db = getDB();
+    const [users] = await db.query(
+      'SELECT id, name, email, avatar_url, is_verified, plan, created_at FROM users WHERE id = ?',
+      [req.user.id]
+    );
+
+    if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    const user = users[0];
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatarUrl: user.avatar_url,
+      isVerified: user.is_verified,
+      plan: user.plan,
+      createdAt: user.created_at,
+    });
   } catch (err) {
     next(err);
   }
