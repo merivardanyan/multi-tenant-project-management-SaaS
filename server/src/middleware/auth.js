@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { getDB } = require('../db/connection');
 
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -19,4 +20,29 @@ function authenticate(req, res, next) {
   }
 }
 
-module.exports = { authenticate };
+function workspaceMember(...allowedRoles) {
+  return async (req, res, next) => {
+    const workspaceId = req.params.workspaceId || req.body.workspaceId;
+    if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+
+    const db = getDB();
+    const [rows] = await db.query(
+      'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [workspaceId, req.user.id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(403).json({ error: 'Not a member of this workspace' });
+    }
+
+    const memberRole = rows[0].role;
+    if (allowedRoles.length > 0 && !allowedRoles.includes(memberRole)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+
+    req.workspaceRole = memberRole;
+    next();
+  };
+}
+
+module.exports = { authenticate, workspaceMember };
