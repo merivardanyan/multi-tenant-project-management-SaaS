@@ -79,4 +79,25 @@ CREATE TABLE workspace_members (
     FOREIGN KEY (invited_by) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE workspace_invitations (
+  id            CHAR(36)               NOT NULL DEFAULT (UUID()),
+  workspace_id  CHAR(36)               NOT NULL,
+  invited_by    CHAR(36)               NOT NULL,
+  email         VARCHAR(255)           NOT NULL,
+  role          ENUM('admin','member') NOT NULL DEFAULT 'member',
+  token         VARCHAR(100)           NOT NULL,
+  expires_at    DATETIME               NOT NULL,
+  accepted_at   DATETIME                   NULL DEFAULT NULL,
+  created_at    DATETIME               NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_invite_token      (token),
+         KEY idx_invite_workspace (workspace_id),
+         KEY idx_invite_email     (email),
+  CONSTRAINT fk_invite_workspace
+    FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
+  CONSTRAINT fk_invite_by
+    FOREIGN KEY (invited_by) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
