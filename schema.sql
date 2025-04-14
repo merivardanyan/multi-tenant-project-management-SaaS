@@ -40,4 +40,43 @@ CREATE TABLE refresh_tokens (
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE workspaces (
+  id                  CHAR(36)           NOT NULL DEFAULT (UUID()),
+  name                VARCHAR(100)       NOT NULL,
+  slug                VARCHAR(100)       NOT NULL,
+  owner_id            CHAR(36)           NOT NULL,
+  plan                ENUM('free','pro') NOT NULL DEFAULT 'free',
+  stripe_sub_id       VARCHAR(100)           NULL DEFAULT NULL,
+  stripe_sub_status   VARCHAR(50)            NULL DEFAULT NULL,
+  logo_url            VARCHAR(500)           NULL DEFAULT NULL,
+  created_at          DATETIME           NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at          DATETIME           NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_workspace_slug       (slug),
+  UNIQUE KEY uq_workspace_stripe_sub (stripe_sub_id),
+         KEY idx_workspace_owner     (owner_id),
+  CONSTRAINT fk_workspace_owner
+    FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE workspace_members (
+  id            CHAR(36)                       NOT NULL DEFAULT (UUID()),
+  workspace_id  CHAR(36)                       NOT NULL,
+  user_id       CHAR(36)                       NOT NULL,
+  role          ENUM('owner','admin','member') NOT NULL DEFAULT 'member',
+  invited_by    CHAR(36)                           NULL DEFAULT NULL,
+  joined_at     DATETIME                       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_ws_member       (workspace_id, user_id),
+         KEY idx_ws_member_user (user_id),
+  CONSTRAINT fk_wsm_workspace
+    FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
+  CONSTRAINT fk_wsm_user
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_wsm_invited_by
+    FOREIGN KEY (invited_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
