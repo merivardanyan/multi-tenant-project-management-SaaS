@@ -47,4 +47,46 @@ router.post('/', authenticate, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/workspaces/{workspaceId}:
+ *   get:
+ *     tags: [Workspaces]
+ *     summary: Get workspace details
+ */
+router.get('/:workspaceId', authenticate, workspaceMember(), async (req, res, next) => {
+  try {
+    const db = getDB();
+    const [workspaces] = await db.query('SELECT * FROM workspaces WHERE id = ?', [req.params.workspaceId]);
+    if (workspaces.length === 0) return res.status(404).json({ error: 'Workspace not found' });
+    res.json(workspaces[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/workspaces/{workspaceId}/members:
+ *   get:
+ *     tags: [Workspaces]
+ *     summary: List workspace members
+ */
+router.get('/:workspaceId/members', authenticate, workspaceMember(), async (req, res, next) => {
+  try {
+    const db = getDB();
+    const [members] = await db.query(
+      `SELECT u.id, u.name, u.email, u.avatar_url, wm.role, wm.joined_at
+       FROM workspace_members wm
+       JOIN users u ON wm.user_id = u.id
+       WHERE wm.workspace_id = ?
+       ORDER BY wm.joined_at ASC`,
+      [req.params.workspaceId]
+    );
+    res.json(members);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
