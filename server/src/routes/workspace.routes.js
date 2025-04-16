@@ -197,4 +197,42 @@ router.post('/join/:token', authenticate, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/workspaces/{workspaceId}:
+ *   put:
+ *     tags: [Workspaces]
+ *     summary: Update workspace (owner/admin only)
+ */
+router.put('/:workspaceId', authenticate, workspaceMember('owner', 'admin'), async (req, res, next) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    const db = getDB();
+    await db.query('UPDATE workspaces SET name = ? WHERE id = ?', [name, req.params.workspaceId]);
+
+    res.json({ message: 'Workspace updated' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/workspaces/{workspaceId}:
+ *   delete:
+ *     tags: [Workspaces]
+ *     summary: Delete workspace (owner only)
+ */
+router.delete('/:workspaceId', authenticate, workspaceMember('owner'), async (req, res, next) => {
+  try {
+    const db = getDB();
+    await db.query('DELETE FROM workspaces WHERE id = ?', [req.params.workspaceId]);
+    res.json({ message: 'Workspace deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
