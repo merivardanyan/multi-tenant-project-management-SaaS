@@ -44,4 +44,23 @@ async function sendResetPasswordEmail(email, token) {
   });
 }
 
-module.exports = { sendVerificationEmail, sendResetPasswordEmail };
+async function sendWorkspaceInviteEmail(email, workspaceName, inviterName, token) {
+  const url = `${process.env.CLIENT_URL}/invite?token=${token}`;
+  await getTransporter().sendMail({
+    from: `"ProjectFlow" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: `You're invited to ${workspaceName} - ProjectFlow`,
+    html: `
+      <h2>Workspace Invitation</h2>
+      <p>${inviterName} invited you to join <strong>${workspaceName}</strong> on ProjectFlow.</p>
+      <a href="${url}">Accept Invitation</a>
+      <p>This invite expires in 7 days.</p>
+    `,
+  });
+}
+
+module.exports = {
+  sendVerificationEmail,
+  sendResetPasswordEmail,
+  sendWorkspaceInviteEmail,
+};
