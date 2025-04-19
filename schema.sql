@@ -168,4 +168,66 @@ CREATE TABLE columns (
     FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+
+-- -------------------------------------------------------------
+-- 8. TASKS
+-- -------------------------------------------------------------
+CREATE TABLE tasks (
+  id            CHAR(36)                                NOT NULL DEFAULT (UUID()),
+  column_id     CHAR(36)                                NOT NULL,
+  project_id    CHAR(36)                                NOT NULL,
+  title         VARCHAR(255)                            NOT NULL,
+  description   TEXT                                        NULL DEFAULT NULL,
+  assignee_id   CHAR(36)                                    NULL DEFAULT NULL,
+  created_by    CHAR(36)                                NOT NULL,
+  priority      ENUM('none','low','medium','high','urgent') NOT NULL DEFAULT 'none',
+  due_date      DATE                                        NULL DEFAULT NULL,
+  position      FLOAT                                   NOT NULL DEFAULT 0,
+  created_at    DATETIME                                NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME                                NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+          KEY idx_task_column         (column_id),
+          KEY idx_task_project        (project_id),
+          KEY idx_task_assignee       (assignee_id),
+          KEY idx_task_position       (column_id, position),
+          KEY idx_task_due            (due_date),
+  CONSTRAINT fk_task_column
+    FOREIGN KEY (column_id)   REFERENCES columns  (id)   ON DELETE CASCADE,
+  CONSTRAINT fk_task_project
+    FOREIGN KEY (project_id)  REFERENCES projects (id)   ON DELETE CASCADE,
+  CONSTRAINT fk_task_assignee
+    FOREIGN KEY (assignee_id) REFERENCES users    (id)   ON DELETE SET NULL,
+  CONSTRAINT fk_task_created_by
+    FOREIGN KEY (created_by)  REFERENCES users    (id)   ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- -------------------------------------------------------------
+-- 9. TASK LABELS
+-- -------------------------------------------------------------
+CREATE TABLE labels (
+  id          CHAR(36)    NOT NULL DEFAULT (UUID()),
+  project_id  CHAR(36)    NOT NULL,
+  name        VARCHAR(50) NOT NULL,
+  color       CHAR(7)     NOT NULL DEFAULT '#64748b',
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+          KEY idx_label_project   (project_id),
+  CONSTRAINT fk_label_project
+    FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE task_labels (
+  task_id   CHAR(36) NOT NULL,
+  label_id  CHAR(36) NOT NULL,
+
+  PRIMARY KEY (task_id, label_id),
+  CONSTRAINT fk_tl_task
+    FOREIGN KEY (task_id)  REFERENCES tasks  (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tl_label
+    FOREIGN KEY (label_id) REFERENCES labels (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
