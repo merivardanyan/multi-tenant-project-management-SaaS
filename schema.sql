@@ -150,7 +150,7 @@ CREATE TABLE projects (
 
 
 -- -------------------------------------------------------------
--- 7. COLUMNS
+-- 7. COLUMNS  (Kanban columns / statuses)
 -- -------------------------------------------------------------
 CREATE TABLE columns (
   id          CHAR(36)        NOT NULL DEFAULT (UUID()),
@@ -204,7 +204,7 @@ CREATE TABLE tasks (
 
 
 -- -------------------------------------------------------------
--- 9. TASK LABELS
+-- 9. TASK LABELS  (many-to-many via junction)
 -- -------------------------------------------------------------
 CREATE TABLE labels (
   id          CHAR(36)    NOT NULL DEFAULT (UUID()),
@@ -229,5 +229,72 @@ CREATE TABLE task_labels (
   CONSTRAINT fk_tl_label
     FOREIGN KEY (label_id) REFERENCES labels (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- -------------------------------------------------------------
+-- 10. TASK COMMENTS
+-- -------------------------------------------------------------
+CREATE TABLE task_comments (
+  id          CHAR(36)    NOT NULL DEFAULT (UUID()),
+  task_id     CHAR(36)    NOT NULL,
+  user_id     CHAR(36)    NOT NULL,
+  body        TEXT        NOT NULL,
+  edited_at   DATETIME        NULL DEFAULT NULL,
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+          KEY idx_comment_task    (task_id),
+          KEY idx_comment_user    (user_id),
+  CONSTRAINT fk_comment_task
+    FOREIGN KEY (task_id)  REFERENCES tasks (id) ON DELETE CASCADE,
+  CONSTRAINT fk_comment_user
+    FOREIGN KEY (user_id)  REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- -------------------------------------------------------------
+-- 11. ACTIVITY LOGS
+-- -------------------------------------------------------------
+CREATE TABLE activity_logs (
+  id           CHAR(36)     NOT NULL DEFAULT (UUID()),
+  workspace_id CHAR(36)     NOT NULL,
+  project_id   CHAR(36)         NULL DEFAULT NULL,
+  user_id      CHAR(36)         NULL DEFAULT NULL,
+  action_type  VARCHAR(60)  NOT NULL,
+  entity_type  VARCHAR(40)  NOT NULL,
+  entity_id    CHAR(36)     NOT NULL,
+  meta         JSON             NULL DEFAULT NULL,
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+          KEY idx_log_workspace    (workspace_id, created_at),
+          KEY idx_log_project      (project_id,   created_at),
+          KEY idx_log_user         (user_id),
+          KEY idx_log_entity       (entity_type,  entity_id),
+  CONSTRAINT fk_log_workspace
+    FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
+  CONSTRAINT fk_log_project
+    FOREIGN KEY (project_id)   REFERENCES projects   (id) ON DELETE CASCADE,
+  CONSTRAINT fk_log_user
+    FOREIGN KEY (user_id)      REFERENCES users       (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =============================================================
+--  SEED: default columns for every new project
+-- =============================================================
+DELIMITER $$
+
+CREATE PROCEDURE seed_default_columns(IN p_project_id CHAR(36))
+BEGIN
+  INSERT INTO columns (id, project_id, title, color, position) VALUES
+    (UUID(), p_project_id, 'Backlog',     '#94a3b8', 1),
+    (UUID(), p_project_id, 'To do',       '#6366f1', 2),
+    (UUID(), p_project_id, 'In progress', '#f59e0b', 3),
+    (UUID(), p_project_id, 'In review',   '#8b5cf6', 4),
+    (UUID(), p_project_id, 'Done',        '#10b981', 5);
+END$$
+
+DELIMITER ;
 
 SET FOREIGN_KEY_CHECKS = 1;
