@@ -45,6 +45,14 @@ router.post('/', authenticate, async (req, res, next) => {
       [id, workspaceId, name, description || null, color || '#6366f1', req.user.id]
     );
 
+    const defaultColumns = ['To Do', 'In Progress', 'In Review', 'Done'];
+    for (const col of defaultColumns) {
+      await db.query(
+        'INSERT INTO `columns` (id, project_id, title, position) VALUES (?, ?, ?, ?)',
+        [uuidv4(), id, col, 0]
+      );
+    }
+
     res.status(201).json({ id, name, workspaceId, description, color: color || '#6366f1' });
   } catch (err) {
     next(err);
