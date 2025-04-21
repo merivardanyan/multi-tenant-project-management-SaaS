@@ -5,6 +5,13 @@ const { authenticate, workspaceMember } = require('../middleware/auth');
 
 const router = express.Router();
 
+/**
+ * @swagger
+ * /api/projects/workspace/{workspaceId}:
+ *   get:
+ *     tags: [Projects]
+ *     summary: List projects in a workspace
+ */
 router.get('/workspace/:workspaceId', authenticate, workspaceMember(), async (req, res, next) => {
   try {
     const db = getDB();
@@ -22,6 +29,13 @@ router.get('/workspace/:workspaceId', authenticate, workspaceMember(), async (re
   }
 });
 
+/**
+ * @swagger
+ * /api/projects:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Create a new project
+ */
 router.post('/', authenticate, async (req, res, next) => {
   try {
     const { workspaceId, name, description, color } = req.body;
@@ -54,6 +68,58 @@ router.post('/', authenticate, async (req, res, next) => {
     }
 
     res.status(201).json({ id, name, workspaceId, description, color: color || '#6366f1' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/projects/{projectId}:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get project details with columns and tasks
+ */
+router.get('/:projectId', authenticate, async (req, res, next) => {
+  try {
+    const db = getDB();
+    const [projects] = await db.query('SELECT * FROM projects WHERE id = ?', [req.params.projectId]);
+
+    if (projects.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const project = projects[0];
+
+    const [membership] = await db.query(
+      'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [project.workspace_id, req.user.id]
+    );
+    if (membership.length === 0) {
+      return res.status(403).json({ error: 'Not a member of this workspace' });
+    }
+
+    const [columns] = await db.query(
+      'SELECT * FROM `columns` WHERE project_id = ? ORDER BY position ASC',
+      [project.id]
+    );
+
+    const [tasks] = await db.query(
+      `SELECT t.*, u.name as assignee_name, u.avatar_url as assignee_avatar
+       FROM tasks t
+       LEFT JOIN users u ON t.assignee_id = u.id
+       WHERE t.project_id = ?
+       ORDER BY t.position ASC`,
+      [project.id]
+    );
+
+    res.json({
+      ...project,
+      columns: columns.map((col) => ({
+        ...col,
+        tasks: tasks.filter((t) => t.column_id === col.id),
+      })),
+    });
   } catch (err) {
     next(err);
   }
