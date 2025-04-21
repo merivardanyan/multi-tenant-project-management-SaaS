@@ -46,10 +46,10 @@ router.post('/', authenticate, async (req, res, next) => {
     );
 
     const defaultColumns = ['To Do', 'In Progress', 'In Review', 'Done'];
-    for (const col of defaultColumns) {
+    for (let i = 0; i < defaultColumns.length; i++) {
       await db.query(
         'INSERT INTO `columns` (id, project_id, title, position) VALUES (?, ?, ?, ?)',
-        [uuidv4(), id, col, 0]
+        [uuidv4(), id, defaultColumns[i], i]
       );
     }
 
