@@ -67,6 +67,11 @@ router.post('/', authenticate, async (req, res, next) => {
       );
     }
 
+    await db.query(
+      'INSERT INTO activity_logs (id, project_id, user_id, action_type, entity_type, entity_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [uuidv4(), id, req.user.id, 'created', 'project', id]
+    );
+
     res.status(201).json({ id, name, workspaceId, description, color: color || '#6366f1' });
   } catch (err) {
     next(err);
@@ -120,6 +125,104 @@ router.get('/:projectId', authenticate, async (req, res, next) => {
         tasks: tasks.filter((t) => t.column_id === col.id),
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/projects/{projectId}:
+ *   put:
+ *     tags: [Projects]
+ *     summary: Update a project
+ */
+router.put('/:projectId', authenticate, async (req, res, next) => {
+  try {
+    const { name, description, color, is_archived } = req.body;
+    const db = getDB();
+
+    const [projects] = await db.query('SELECT * FROM projects WHERE id = ?', [req.params.projectId]);
+    if (projects.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const [membership] = await db.query(
+      'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [projects[0].workspace_id, req.user.id]
+    );
+    if (membership.length === 0) {
+      return res.status(403).json({ error: 'Not a member of this workspace' });
+    }
+
+    const updates = [];
+    const values = [];
+    if (name !== undefined) { updates.push('name = ?'); values.push(name); }
+    if (description !== undefined) { updates.push('description = ?'); values.push(description); }
+    if (color !== undefined) { updates.push('color = ?'); values.push(color); }
+    if (is_archived !== undefined) { updates.push('is_archived = ?'); values.push(is_archived); }
+
+    if (updates.length > 0) {
+      values.push(req.params.projectId);
+      await db.query(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`, values);
+    }
+
+    res.json({ message: 'Project updated' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/projects/{projectId}:
+ *   delete:
+ *     tags: [Projects]
+ *     summary: Delete a project
+ */
+router.delete('/:projectId', authenticate, async (req, res, next) => {
+  try {
+    const db = getDB();
+    const [projects] = await db.query('SELECT * FROM projects WHERE id = ?', [req.params.projectId]);
+    if (projects.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const [membership] = await db.query(
+      'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [projects[0].workspace_id, req.user.id]
+    );
+    if (membership.length === 0 || membership[0].role === 'member') {
+      return res.status(403).json({ error: 'Only owners and admins can delete projects' });
+    }
+
+    await db.query('DELETE FROM projects WHERE id = ?', [req.params.projectId]);
+    res.json({ message: 'Project deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/projects/{projectId}/activity:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get project activity log
+ */
+router.get('/:projectId/activity', authenticate, async (req, res, next) => {
+  try {
+    const db = getDB();
+    const [logs] = await db.query(
+      `SELECT al.*, u.name as user_name, u.avatar_url as user_avatar
+       FROM activity_logs al
+       JOIN users u ON al.user_id = u.id
+       WHERE al.project_id = ?
+       ORDER BY al.created_at DESC
+       LIMIT 50`,
+      [req.params.projectId]
+    );
+    res.json(logs);
   } catch (err) {
     next(err);
   }
