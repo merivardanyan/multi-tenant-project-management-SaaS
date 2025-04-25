@@ -2,236 +2,154 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db/connection');
 const { authenticate, workspaceMember } = require('../middleware/auth');
-const { sendWorkspaceInviteEmail } = require('../utils/email');
+const { sendInviteEmail } = require('../utils/email');
 
 const router = express.Router();
 
-/**
- * @swagger
- * /api/workspaces:
- *   get:
- *     tags: [Workspaces]
- *     summary: List workspaces for current user
- */
-router.get('/', authenticate, async (req, res, next) => {
+// GET /api/workspaces
+router.get('/', authenticate, async (req, res) => {
   try {
     const db = getDB();
-    const [workspaces] = await db.query(
+    const [rows] = await db.query(
       `SELECT w.*, wm.role
        FROM workspaces w
-       JOIN workspace_members wm ON w.id = wm.workspace_id
-       WHERE wm.user_id = ?
-       ORDER BY w.created_at DESC`,
-      [req.user.id]
+       JOIN workspace_members wm ON wm.workspace_id = w.id
+       WHERE wm.user_id = ?`,
+      [req.user.userId]
     );
-    res.json(workspaces);
+    res.json(rows);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces:
- *   post:
- *     tags: [Workspaces]
- *     summary: Create a new workspace
- */
-router.post('/', authenticate, async (req, res, next) => {
+// POST /api/workspaces
+router.post('/', authenticate, async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) {
-      return res.status(400).json({ error: 'Workspace name is required' });
-    }
-
     const db = getDB();
-    const id = uuidv4();
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + id.slice(0, 8);
+    const { name, slug } = req.body;
+    if (!name || !slug) return res.status(400).json({ error: 'name and slug required' });
 
+    const id = uuidv4();
     await db.query(
       'INSERT INTO workspaces (id, name, slug, owner_id) VALUES (?, ?, ?, ?)',
-      [id, name, slug, req.user.id]
+      [id, name, slug, req.user.userId]
     );
-
     await db.query(
       'INSERT INTO workspace_members (id, workspace_id, user_id, role) VALUES (?, ?, ?, ?)',
-      [uuidv4(), id, req.user.id, 'owner']
+      [uuidv4(), id, req.user.userId, 'owner']
     );
-
-    res.status(201).json({ id, name, slug, ownerId: req.user.id, plan: 'free' });
+    const [[workspace]] = await db.query('SELECT * FROM workspaces WHERE id = ?', [id]);
+    res.status(201).json(workspace);
   } catch (err) {
-    next(err);
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Slug already taken' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces/{workspaceId}:
- *   get:
- *     tags: [Workspaces]
- *     summary: Get workspace details
- */
-router.get('/:workspaceId', authenticate, workspaceMember(), async (req, res, next) => {
+// GET /api/workspaces/:workspaceId
+router.get('/:workspaceId', authenticate, workspaceMember(), async (req, res) => {
   try {
     const db = getDB();
-    const [workspaces] = await db.query('SELECT * FROM workspaces WHERE id = ?', [req.params.workspaceId]);
-
-    if (workspaces.length === 0) {
-      return res.status(404).json({ error: 'Workspace not found' });
-    }
-
-    res.json(workspaces[0]);
+    const [[workspace]] = await db.query(
+      'SELECT * FROM workspaces WHERE id = ?',
+      [req.params.workspaceId]
+    );
+    res.json(workspace);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces/{workspaceId}/members:
- *   get:
- *     tags: [Workspaces]
- *     summary: List workspace members
- */
-router.get('/:workspaceId/members', authenticate, workspaceMember(), async (req, res, next) => {
+// GET /api/workspaces/:workspaceId/members
+router.get('/:workspaceId/members', authenticate, workspaceMember(), async (req, res) => {
   try {
     const db = getDB();
     const [members] = await db.query(
       `SELECT u.id, u.name, u.email, u.avatar_url, wm.role, wm.joined_at
        FROM workspace_members wm
-       JOIN users u ON wm.user_id = u.id
-       WHERE wm.workspace_id = ?
-       ORDER BY wm.joined_at ASC`,
+       JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = ?`,
       [req.params.workspaceId]
     );
     res.json(members);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces/{workspaceId}/invite:
- *   post:
- *     tags: [Workspaces]
- *     summary: Invite a user to workspace by email
- */
-router.post('/:workspaceId/invite', authenticate, workspaceMember('owner', 'admin'), async (req, res, next) => {
+// POST /api/workspaces/:workspaceId/invite
+router.post('/:workspaceId/invite', authenticate, workspaceMember('admin'), async (req, res) => {
   try {
-    const { email, role = 'member' } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-
     const db = getDB();
-    const workspaceId = req.params.workspaceId;
-
-    const [existing] = await db.query(
-      `SELECT wm.id FROM workspace_members wm
-       JOIN users u ON wm.user_id = u.id
-       WHERE wm.workspace_id = ? AND u.email = ?`,
-      [workspaceId, email]
-    );
-    if (existing.length > 0) {
-      return res.status(409).json({ error: 'User is already a member' });
-    }
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
 
     const token = uuidv4();
-    const id = uuidv4();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
     await db.query(
-      'INSERT INTO workspace_invites (id, workspace_id, email, token, role, invited_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, workspaceId, email, token, role, req.user.id, expiresAt]
+      'INSERT INTO workspace_invitations (id, workspace_id, email, token, expires_at) VALUES (?, ?, ?, ?, ?)',
+      [uuidv4(), req.params.workspaceId, email, token, expiresAt]
     );
 
-    const [ws] = await db.query('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
-    const [inviter] = await db.query('SELECT name FROM users WHERE id = ?', [req.user.id]);
+    const [[workspace]] = await db.query('SELECT * FROM workspaces WHERE id = ?', [req.params.workspaceId]);
+    await sendInviteEmail(email, token, workspace.name);
 
-    sendWorkspaceInviteEmail(email, ws[0].name, inviter[0].name, token).catch(console.error);
-
-    res.status(201).json({ message: 'Invitation sent', token });
+    res.json({ message: 'Invite sent' });
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces/join/{token}:
- *   post:
- *     tags: [Workspaces]
- *     summary: Accept workspace invite
- */
-router.post('/join/:token', authenticate, async (req, res, next) => {
+// POST /api/workspaces/join/:token
+router.post('/join/:token', authenticate, async (req, res) => {
   try {
     const db = getDB();
-    const [invites] = await db.query(
-      'SELECT * FROM workspace_invites WHERE token = ? AND expires_at > NOW()',
+    const [[invite]] = await db.query(
+      'SELECT * FROM workspace_invitations WHERE token = ? AND expires_at > NOW()',
       [req.params.token]
     );
+    if (!invite) return res.status(400).json({ error: 'Invalid or expired invite' });
 
-    if (invites.length === 0) {
-      return res.status(400).json({ error: 'Invalid or expired invite' });
-    }
-
-    const invite = invites[0];
-
-    const [existing] = await db.query(
+    const [[existing]] = await db.query(
       'SELECT id FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
-      [invite.workspace_id, req.user.id]
+      [invite.workspace_id, req.user.userId]
     );
-    if (existing.length > 0) {
-      return res.status(409).json({ error: 'Already a member of this workspace' });
-    }
+    if (existing) return res.status(409).json({ error: 'Already a member' });
 
     await db.query(
       'INSERT INTO workspace_members (id, workspace_id, user_id, role) VALUES (?, ?, ?, ?)',
-      [uuidv4(), invite.workspace_id, req.user.id, invite.role]
+      [uuidv4(), invite.workspace_id, req.user.userId, 'member']
     );
+    await db.query('DELETE FROM workspace_invitations WHERE token = ?', [req.params.token]);
 
-    await db.query('DELETE FROM workspace_invites WHERE id = ?', [invite.id]);
-
-    res.json({ message: 'Joined workspace', workspaceId: invite.workspace_id });
+    res.json({ workspace_id: invite.workspace_id });
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces/{workspaceId}:
- *   put:
- *     tags: [Workspaces]
- *     summary: Update workspace (owner/admin only)
- */
-router.put('/:workspaceId', authenticate, workspaceMember('owner', 'admin'), async (req, res, next) => {
+// PATCH /api/workspaces/:workspaceId
+router.patch('/:workspaceId', authenticate, workspaceMember('owner'), async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Name is required' });
-
     const db = getDB();
+    const { name } = req.body;
     await db.query('UPDATE workspaces SET name = ? WHERE id = ?', [name, req.params.workspaceId]);
-
-    res.json({ message: 'Workspace updated' });
+    const [[workspace]] = await db.query('SELECT * FROM workspaces WHERE id = ?', [req.params.workspaceId]);
+    res.json(workspace);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/workspaces/{workspaceId}:
- *   delete:
- *     tags: [Workspaces]
- *     summary: Delete workspace (owner only)
- */
-router.delete('/:workspaceId', authenticate, workspaceMember('owner'), async (req, res, next) => {
+// DELETE /api/workspaces/:workspaceId
+router.delete('/:workspaceId', authenticate, workspaceMember('owner'), async (req, res) => {
   try {
     const db = getDB();
     await db.query('DELETE FROM workspaces WHERE id = ?', [req.params.workspaceId]);
     res.json({ message: 'Workspace deleted' });
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
