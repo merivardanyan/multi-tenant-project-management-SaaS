@@ -34,7 +34,6 @@ router.post('/:workspaceId/projects/:projectId/tasks', authenticate, workspaceMe
 
     const [[task]] = await db.query('SELECT * FROM tasks WHERE id = ?', [id]);
 
-    // emit to everyone in this project room
     const io = req.app.get('io');
     if (io) io.to(`project:${req.params.projectId}`).emit('task:created', task);
 
@@ -115,12 +114,22 @@ router.post('/:workspaceId/projects/:projectId/tasks/:taskId/move', authenticate
   try {
     const db = getDB();
     const { column_id, position } = req.body;
+    if (column_id === undefined || position === undefined) {
+      return res.status(400).json({ error: 'column_id and position required' });
+    }
 
-    // bug: forgot to validate column belongs to this project
-    const [[task]] = await db.query('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
+    const [[task]] = await db.query(
+      'SELECT * FROM tasks WHERE id = ? AND project_id = ?',
+      [req.params.taskId, req.params.projectId]
+    );
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    // shift other tasks to make room
+    const [[col]] = await db.query(
+      'SELECT id FROM columns WHERE id = ? AND project_id = ?',
+      [column_id, req.params.projectId]
+    );
+    if (!col) return res.status(400).json({ error: 'Column does not belong to this project' });
+
     await db.query(
       'UPDATE tasks SET position = position + 1 WHERE column_id = ? AND position >= ?',
       [column_id, position]
