@@ -1,133 +1,146 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db/connection');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, workspaceMember } = require('../middleware/auth');
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
 
-/**
- * @swagger
- * /api/tasks:
- *   post:
- *     tags: [Tasks]
- *     summary: Create a new task
- */
-router.post('/', authenticate, async (req, res, next) => {
+// POST /api/workspaces/:workspaceId/projects/:projectId/tasks
+router.post('/:workspaceId/projects/:projectId/tasks', authenticate, workspaceMember(), async (req, res) => {
   try {
-    const { columnId, projectId, title, description, assigneeId, priority, dueDate } = req.body;
-    if (!columnId || !projectId || !title) {
-      return res.status(400).json({ error: 'columnId, projectId, and title are required' });
-    }
-
     const db = getDB();
+    const { title, description, column_id, priority, due_date, assignee_id } = req.body;
+    if (!title || !column_id) return res.status(400).json({ error: 'title and column_id required' });
 
-    const [maxPos] = await db.query(
-      'SELECT MAX(position) as maxPos FROM tasks WHERE column_id = ?',
-      [columnId]
+    const [[col]] = await db.query(
+      'SELECT id FROM columns WHERE id = ? AND project_id = ?',
+      [column_id, req.params.projectId]
     );
-    const position = (maxPos[0].maxPos ?? -1) + 1;
+    if (!col) return res.status(404).json({ error: 'Column not found' });
+
+    const [[{ maxPos }]] = await db.query(
+      'SELECT MAX(position) as maxPos FROM tasks WHERE column_id = ?',
+      [column_id]
+    );
 
     const id = uuidv4();
     await db.query(
-      `INSERT INTO tasks (id, column_id, project_id, title, description, assignee_id, priority, due_date, position, created_by)
+      `INSERT INTO tasks (id, project_id, column_id, title, description, priority, due_date, assignee_id, position, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, columnId, projectId, title, description || null, assigneeId || null, priority || 'medium', dueDate || null, position, req.user.id]
+      [id, req.params.projectId, column_id, title, description || null,
+       priority || 'medium', due_date || null, assignee_id || null,
+       (maxPos || 0) + 1, req.user.userId]
     );
 
+    const [[task]] = await db.query('SELECT * FROM tasks WHERE id = ?', [id]);
+
+    // emit to everyone in this project room
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('task:created', task);
+
+    res.status(201).json(task);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/workspaces/:workspaceId/projects/:projectId/tasks
+router.get('/:workspaceId/projects/:projectId/tasks', authenticate, workspaceMember(), async (req, res) => {
+  try {
+    const db = getDB();
     const [tasks] = await db.query(
-      `SELECT t.*, u.name as assignee_name, u.avatar_url as assignee_avatar
-       FROM tasks t
-       LEFT JOIN users u ON t.assignee_id = u.id
-       WHERE t.id = ?`,
-      [id]
+      'SELECT * FROM tasks WHERE project_id = ? ORDER BY position ASC',
+      [req.params.projectId]
     );
-
-    await db.query(
-      'INSERT INTO activity_logs (id, project_id, user_id, action_type, entity_type, entity_id, meta) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [uuidv4(), projectId, req.user.id, 'created', 'task', id, JSON.stringify({ title })]
-    );
-
-    res.status(201).json(tasks[0]);
+    res.json(tasks);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/tasks/{taskId}:
- *   put:
- *     tags: [Tasks]
- *     summary: Update a task
- */
-router.put('/:taskId', authenticate, async (req, res, next) => {
+// PATCH /api/workspaces/:workspaceId/projects/:projectId/tasks/:taskId
+router.patch('/:workspaceId/projects/:projectId/tasks/:taskId', authenticate, workspaceMember(), async (req, res) => {
   try {
-    const { title, description, assigneeId, priority, dueDate, columnId, position } = req.body;
     const db = getDB();
+    const { title, description, priority, due_date, assignee_id, column_id } = req.body;
 
-    const [tasks] = await db.query('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
-    if (tasks.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const [[task]] = await db.query('SELECT * FROM tasks WHERE id = ? AND project_id = ?',
+      [req.params.taskId, req.params.projectId]);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    const task = tasks[0];
-    const updates = [];
-    const values = [];
-
-    if (title !== undefined) { updates.push('title = ?'); values.push(title); }
-    if (description !== undefined) { updates.push('description = ?'); values.push(description); }
-    if (assigneeId !== undefined) { updates.push('assignee_id = ?'); values.push(assigneeId); }
-    if (priority !== undefined) { updates.push('priority = ?'); values.push(priority); }
-    if (dueDate !== undefined) { updates.push('due_date = ?'); values.push(dueDate); }
-    if (columnId !== undefined) { updates.push('column_id = ?'); values.push(columnId); }
-    if (position !== undefined) { updates.push('position = ?'); values.push(position); }
-
-    if (updates.length > 0) {
-      values.push(req.params.taskId);
-      await db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
-    }
-
-    const actionType = columnId && columnId !== task.column_id ? 'moved' : 'updated';
     await db.query(
-      'INSERT INTO activity_logs (id, project_id, user_id, action_type, entity_type, entity_id, meta) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [uuidv4(), task.project_id, req.user.id, actionType, 'task', req.params.taskId, JSON.stringify({ title: task.title })]
+      `UPDATE tasks SET
+        title = COALESCE(?, title),
+        description = COALESCE(?, description),
+        priority = COALESCE(?, priority),
+        due_date = COALESCE(?, due_date),
+        assignee_id = COALESCE(?, assignee_id),
+        column_id = COALESCE(?, column_id)
+       WHERE id = ?`,
+      [title, description, priority, due_date, assignee_id, column_id, req.params.taskId]
     );
 
-    const [updated] = await db.query(
-      `SELECT t.*, u.name as assignee_name, u.avatar_url as assignee_avatar
-       FROM tasks t
-       LEFT JOIN users u ON t.assignee_id = u.id
-       WHERE t.id = ?`,
-      [req.params.taskId]
-    );
+    const [[updated]] = await db.query('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
 
-    res.json(updated[0]);
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('task:updated', updated);
+
+    res.json(updated);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * @swagger
- * /api/tasks/{taskId}:
- *   delete:
- *     tags: [Tasks]
- *     summary: Delete a task
- */
-router.delete('/:taskId', authenticate, async (req, res, next) => {
+// DELETE /api/workspaces/:workspaceId/projects/:projectId/tasks/:taskId
+router.delete('/:workspaceId/projects/:projectId/tasks/:taskId', authenticate, workspaceMember(), async (req, res) => {
   try {
     const db = getDB();
-    const [tasks] = await db.query('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
-    if (tasks.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const [[task]] = await db.query('SELECT * FROM tasks WHERE id = ? AND project_id = ?',
+      [req.params.taskId, req.params.projectId]);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     await db.query('DELETE FROM tasks WHERE id = ?', [req.params.taskId]);
 
-    await db.query(
-      'INSERT INTO activity_logs (id, project_id, user_id, action_type, entity_type, entity_id, meta) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [uuidv4(), tasks[0].project_id, req.user.id, 'deleted', 'task', req.params.taskId, JSON.stringify({ title: tasks[0].title })]
-    );
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('task:deleted', { id: req.params.taskId });
 
     res.json({ message: 'Task deleted' });
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/workspaces/:workspaceId/projects/:projectId/tasks/:taskId/move
+router.post('/:workspaceId/projects/:projectId/tasks/:taskId/move', authenticate, workspaceMember(), async (req, res) => {
+  try {
+    const db = getDB();
+    const { column_id, position } = req.body;
+
+    // bug: forgot to validate column belongs to this project
+    const [[task]] = await db.query('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+
+    // shift other tasks to make room
+    await db.query(
+      'UPDATE tasks SET position = position + 1 WHERE column_id = ? AND position >= ?',
+      [column_id, position]
+    );
+
+    await db.query(
+      'UPDATE tasks SET column_id = ?, position = ? WHERE id = ?',
+      [column_id, position, req.params.taskId]
+    );
+
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('task:moved', {
+      taskId: req.params.taskId,
+      column_id,
+      position,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
