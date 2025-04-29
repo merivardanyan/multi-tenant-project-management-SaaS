@@ -1,11 +1,13 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const { initDB } = require('./db/connection');
+const { initSocket } = require('./socket');
 const authRoutes = require('./routes/auth.routes');
 const workspaceRoutes = require('./routes/workspace.routes');
 const projectRoutes = require('./routes/project.routes');
@@ -14,6 +16,11 @@ const columnRoutes = require('./routes/column.routes');
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: process.env.CLIENT_URL || 'http://localhost:5173' },
+});
+
+initSocket(io);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -31,9 +38,9 @@ app.use('/api/', limiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/workspaces', workspaceRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/tasks', taskRoutes);
-app.use('/api/columns', columnRoutes);
+app.use('/api/workspaces', projectRoutes);
+app.use('/api/workspaces', taskRoutes);
+app.use('/api/workspaces', columnRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
