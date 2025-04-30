@@ -1,99 +1,108 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db/connection');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, workspaceMember } = require('../middleware/auth');
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
 
-router.post('/', authenticate, async (req, res, next) => {
+// POST /api/workspaces/:workspaceId/projects/:projectId/columns
+router.post('/:workspaceId/projects/:projectId/columns', authenticate, workspaceMember(), async (req, res) => {
   try {
-    const { projectId, title, color } = req.body;
-    if (!projectId || !title) {
-      return res.status(400).json({ error: 'Project ID and title are required' });
-    }
-
     const db = getDB();
+    const { title, color } = req.body;
+    if (!title) return res.status(400).json({ error: 'title required' });
 
-    const [projects] = await db.query('SELECT workspace_id FROM projects WHERE id = ?', [projectId]);
-    if (projects.length === 0) return res.status(404).json({ error: 'Project not found' });
-
-    const [membership] = await db.query(
-      'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
-      [projects[0].workspace_id, req.user.id]
+    const [[{ maxPos }]] = await db.query(
+      'SELECT MAX(position) as maxPos FROM columns WHERE project_id = ?',
+      [req.params.projectId]
     );
-    if (membership.length === 0) return res.status(403).json({ error: 'Not a member' });
-
-    const [maxPos] = await db.query(
-      'SELECT MAX(position) as maxPos FROM `columns` WHERE project_id = ?',
-      [projectId]
-    );
-    const position = (maxPos[0].maxPos ?? -1) + 1;
 
     const id = uuidv4();
     await db.query(
-      'INSERT INTO `columns` (id, project_id, title, position, color) VALUES (?, ?, ?, ?, ?)',
-      [id, projectId, title, position, color || '#94a3b8']
+      'INSERT INTO columns (id, project_id, title, color, position) VALUES (?, ?, ?, ?, ?)',
+      [id, req.params.projectId, title, color || '#94a3b8', (maxPos || 0) + 1]
     );
 
-    const column = { id, project_id: projectId, title, position, color: color || '#94a3b8', tasks: [] };
-    res.status(201).json(column);
+    const [[col]] = await db.query('SELECT * FROM columns WHERE id = ?', [id]);
+
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('column:created', col);
+
+    res.status(201).json(col);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-router.put('/:columnId', authenticate, async (req, res, next) => {
+// PATCH /api/workspaces/:workspaceId/projects/:projectId/columns/:columnId
+router.patch('/:workspaceId/projects/:projectId/columns/:columnId', authenticate, workspaceMember(), async (req, res) => {
   try {
+    const db = getDB();
     const { title, color } = req.body;
-    const db = getDB();
 
-    const [columns] = await db.query('SELECT * FROM `columns` WHERE id = ?', [req.params.columnId]);
-    if (columns.length === 0) return res.status(404).json({ error: 'Column not found' });
+    const [[col]] = await db.query(
+      'SELECT * FROM columns WHERE id = ? AND project_id = ?',
+      [req.params.columnId, req.params.projectId]
+    );
+    if (!col) return res.status(404).json({ error: 'Column not found' });
 
-    const updates = [];
-    const values = [];
-    if (title !== undefined) { updates.push('title = ?'); values.push(title); }
-    if (color !== undefined) { updates.push('color = ?'); values.push(color); }
+    await db.query(
+      'UPDATE columns SET title = COALESCE(?, title), color = COALESCE(?, color) WHERE id = ?',
+      [title, color, req.params.columnId]
+    );
 
-    if (updates.length > 0) {
-      values.push(req.params.columnId);
-      await db.query(`UPDATE \`columns\` SET ${updates.join(', ')} WHERE id = ?`, values);
-    }
+    const [[updated]] = await db.query('SELECT * FROM columns WHERE id = ?', [req.params.columnId]);
 
-    res.json({ message: 'Column updated' });
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('column:updated', updated);
+
+    res.json(updated);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-router.put('/reorder', authenticate, async (req, res, next) => {
-  try {
-    const { projectId, columnOrder } = req.body;
-    if (!projectId || !columnOrder) {
-      return res.status(400).json({ error: 'projectId and columnOrder are required' });
-    }
-
-    const db = getDB();
-    for (let i = 0; i < columnOrder.length; i++) {
-      await db.query('UPDATE `columns` SET position = ? WHERE id = ? AND project_id = ?', [i, columnOrder[i], projectId]);
-    }
-
-    res.json({ message: 'Columns reordered' });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.delete('/:columnId', authenticate, async (req, res, next) => {
+// DELETE /api/workspaces/:workspaceId/projects/:projectId/columns/:columnId
+router.delete('/:workspaceId/projects/:projectId/columns/:columnId', authenticate, workspaceMember(), async (req, res) => {
   try {
     const db = getDB();
-    const [columns] = await db.query('SELECT * FROM `columns` WHERE id = ?', [req.params.columnId]);
-    if (columns.length === 0) return res.status(404).json({ error: 'Column not found' });
+    const [[col]] = await db.query(
+      'SELECT * FROM columns WHERE id = ? AND project_id = ?',
+      [req.params.columnId, req.params.projectId]
+    );
+    if (!col) return res.status(404).json({ error: 'Column not found' });
 
-    await db.query('DELETE FROM `columns` WHERE id = ?', [req.params.columnId]);
+    await db.query('DELETE FROM columns WHERE id = ?', [req.params.columnId]);
+
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('column:deleted', { id: req.params.columnId });
+
     res.json({ message: 'Column deleted' });
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/workspaces/:workspaceId/projects/:projectId/columns/reorder
+router.post('/:workspaceId/projects/:projectId/columns/reorder', authenticate, workspaceMember(), async (req, res) => {
+  try {
+    const db = getDB();
+    const { order } = req.body; // array of { id, position }
+    if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array' });
+
+    await Promise.all(
+      order.map(({ id, position }) =>
+        db.query('UPDATE columns SET position = ? WHERE id = ? AND project_id = ?',
+          [position, id, req.params.projectId])
+      )
+    );
+
+    const io = req.app.get('io');
+    if (io) io.to(`project:${req.params.projectId}`).emit('columns:reordered', { order });
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
