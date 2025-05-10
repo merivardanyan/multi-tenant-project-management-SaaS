@@ -1,12 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import TaskCard from '../components/TaskCard';
 import CreateTaskModal from '../components/CreateTaskModal';
 import TaskDetailModal from '../components/TaskDetailModal';
-import useWorkspaceStore from '../stores/workspaceStore';
 
 export default function ProjectBoardPage() {
   const { workspaceId, projectId } = useParams();
@@ -18,6 +18,35 @@ export default function ProjectBoardPage() {
     queryKey: ['project', projectId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/projects/${projectId}`).then((r) => r.data),
   });
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket.connected) socket.connect();
+
+    socket.emit('join:project', projectId);
+
+    const refresh = () => qc.invalidateQueries(['project', projectId]);
+    socket.on('task:created', refresh);
+    socket.on('task:updated', refresh);
+    socket.on('task:deleted', refresh);
+    socket.on('task:moved', refresh);
+    socket.on('column:created', refresh);
+    socket.on('column:updated', refresh);
+    socket.on('column:deleted', refresh);
+    socket.on('columns:reordered', refresh);
+
+    return () => {
+      socket.emit('leave:project', projectId);
+      socket.off('task:created', refresh);
+      socket.off('task:updated', refresh);
+      socket.off('task:deleted', refresh);
+      socket.off('task:moved', refresh);
+      socket.off('column:created', refresh);
+      socket.off('column:updated', refresh);
+      socket.off('column:deleted', refresh);
+      socket.off('columns:reordered', refresh);
+    };
+  }, [projectId, qc]);
 
   const onDragEnd = useCallback(async (result) => {
     if (!result.destination) return;
