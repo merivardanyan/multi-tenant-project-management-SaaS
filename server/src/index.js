@@ -13,6 +13,8 @@ const workspaceRoutes = require('./routes/workspace.routes');
 const projectRoutes = require('./routes/project.routes');
 const taskRoutes = require('./routes/task.routes');
 const columnRoutes = require('./routes/column.routes');
+const stripeRoutes = require('./routes/stripe.routes');
+const userRoutes = require('./routes/user.routes');
 
 const app = express();
 const server = http.createServer(app);
@@ -35,10 +37,13 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+// webhook must be mounted before express.json() strips the raw body
+app.use('/api/stripe', stripeRoutes);
 app.use(express.json());
 app.use('/api/', limiter);
 
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/workspaces', projectRoutes);
 app.use('/api/workspaces', taskRoutes);
