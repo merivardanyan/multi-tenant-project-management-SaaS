@@ -6,6 +6,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
 const { initDB } = require('./db/connection');
 const { initSocket } = require('./socket');
 const authRoutes = require('./routes/auth.routes');
@@ -37,7 +39,6 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
-// webhook must be mounted before express.json() strips the raw body
 app.use('/api/stripe', stripeRoutes);
 app.use(express.json());
 app.use('/api/', limiter);
@@ -48,6 +49,7 @@ app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/workspaces', projectRoutes);
 app.use('/api/workspaces', taskRoutes);
 app.use('/api/workspaces', columnRoutes);
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
