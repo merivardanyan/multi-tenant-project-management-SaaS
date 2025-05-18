@@ -17,6 +17,8 @@ const taskRoutes = require('./routes/task.routes');
 const columnRoutes = require('./routes/column.routes');
 const stripeRoutes = require('./routes/stripe.routes');
 const userRoutes = require('./routes/user.routes');
+const analyticsRoutes = require('./routes/analytics.routes');
+const timetrackingRoutes = require('./routes/timetracking.routes');
 
 const app = express();
 const server = http.createServer(app);
@@ -49,6 +51,8 @@ app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/workspaces', projectRoutes);
 app.use('/api/workspaces', taskRoutes);
 app.use('/api/workspaces', columnRoutes);
+app.use('/api/workspaces', analyticsRoutes);
+app.use('/api', timetrackingRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.get('/api/health', (req, res) => {
