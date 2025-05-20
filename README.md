@@ -1,29 +1,39 @@
 # projectflow
 
-kanban project management app i've been building. multi-tenant — each team gets their own workspace with members, projects, and a kanban board.
+kanban-style project management for teams. each team gets a workspace with members, projects, and boards.
 
 ## stack
-- **backend**: node/express, mysql 8, socket.io, redis (optional)
-- **frontend**: react 18 + vite, tailwindcss, react-query, zustand
-- **auth**: jwt with refresh token rotation, httponly cookies
-- **payments**: stripe
-- **uploads**: cloudinary (avatars only for now)
 
-## dev setup
+- **backend**: node/express, mysql 8, socket.io, redis (optional)
+- **frontend**: react 18 + vite, tailwindcss, @tanstack/react-query, zustand
+- **auth**: jwt with refresh token rotation, httponly cookies
+- **payments**: stripe (subscription)
+- **uploads**: cloudinary (avatars)
+- **docs**: swagger at /api/docs
+
+## getting started
 
 ```bash
-cd server && npm install
-cp .env.example .env   # fill in your values
-# run schema.sql against your mysql db
+# backend
+cd server
+npm install
+cp .env.example .env
+# fill in .env (mysql creds, jwt secrets, stripe keys, etc.)
+# run schema.sql against your mysql instance
 npm run dev
 ```
 
 ```bash
-cd client && npm install && npm run dev
+# frontend
+cd client
+npm install
+npm run dev
 ```
 
 ## notes
-- free plan is limited to 1 active project per workspace
-- real-time updates use socket.io rooms scoped to each project
-- redis is optional — falls back to an in-memory map if not available
-- time tracking and gantt views are stubbed, not implemented
+
+- free plan: 1 active project per workspace
+- socket.io rooms are scoped per-project so updates don't bleed across projects
+- redis is optional — if it's not running the server falls back to an in-memory map
+- time tracking and gantt chart are stubbed out, not implemented
+- google/github oauth is configured but not wired up yet
