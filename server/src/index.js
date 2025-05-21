@@ -23,7 +23,10 @@ const timetrackingRoutes = require('./routes/timetracking.routes');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true },
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    credentials: true,
+  },
 });
 
 initSocket(io);
@@ -41,6 +44,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+// webhook needs raw body, mount before json parser
 app.use('/api/stripe', stripeRoutes);
 app.use(express.json());
 app.use('/api/', limiter);
